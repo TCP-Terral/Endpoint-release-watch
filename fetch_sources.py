@@ -5,6 +5,7 @@ Usage: python3 fetch_sources.py [days_back]   (default 14)
 
 Output is raw candidates only. Deciding what's significant happens afterward.
 """
+import gzip
 import html
 import json
 import re
@@ -33,7 +34,11 @@ M365_PRODUCTS = [
 def get(url):
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=60) as r:
-        return r.read().decode("utf-8", errors="ignore")
+        body = r.read()
+        # Tech Community sends gzip to cloud IPs even when it isn't requested
+        if r.headers.get("Content-Encoding", "").lower() == "gzip" or body[:2] == b"\x1f\x8b":
+            body = gzip.decompress(body)
+        return body.decode("utf-8", errors="ignore")
 
 
 def clean(s, n=600):
@@ -55,7 +60,10 @@ def page_text(raw):
 
 def rss(url, source, platform, keep=lambda cats, title: True, lane="change"):
     out = []
-    root = ET.fromstring(get(url))
+    try:
+        root = ET.fromstring(get(url))
+    except Exception as e:
+        raise RuntimeError(f"{source}: {e!r}") from e
     for it in root.iter("item"):
         try:
             d = parsedate_to_datetime(it.findtext("pubDate"))
@@ -223,8 +231,10 @@ if __name__ == "__main__":
     for fn in SOURCES:
         try:
             items += fn()
+        except RuntimeError as e:  # rss() already names the source
+            errors.append(str(e))
         except Exception as e:  # keep going if one source breaks
-            errors.append(repr(e))
+            errors.append(f"{fn.__name__}: {e!r}")
     OUT.write_text(json.dumps({"fetched": datetime.now(timezone.utc).isoformat(),
                                "days": DAYS, "errors": errors, "items": items}, indent=1))
     by = {}
