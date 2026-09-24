@@ -10,6 +10,8 @@ import html
 import json
 import re
 import sys
+import time
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -32,6 +34,17 @@ M365_PRODUCTS = [
 
 
 def get(url):
+    # Tech Community sometimes resets connections from cloud IPs; retry with backoff
+    for wait in (3, 8, None):
+        try:
+            return _get(url)
+        except (urllib.error.URLError, ConnectionError, TimeoutError):
+            if wait is None:
+                raise
+            time.sleep(wait)
+
+
+def _get(url):
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=60) as r:
         body = r.read()
